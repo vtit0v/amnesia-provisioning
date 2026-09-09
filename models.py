@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 import uuid
@@ -12,16 +12,13 @@ class AmneziaClient(Base):
     client_id = Column(String(36), unique=True, index=True, default=lambda: str(uuid.uuid4()))
     device_id = Column(String(255), nullable=True)
     
-    # Obfuscation parameters (random per client)
-    h1 = Column(Integer)  # Random hash
-    h2 = Column(Integer)  # Random hash
-    h3 = Column(Integer)  # Random hash
-    h4 = Column(Integer)  # Random hash
+    h1 = Column(BigInteger)
+    h2 = Column(BigInteger)
+    h3 = Column(BigInteger)
+    h4 = Column(BigInteger)
     
-    # Config
     conf_content = Column(Text)
     
-    # Status
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     revoked_at = Column(DateTime, nullable=True)
