@@ -1,12 +1,11 @@
 from fastapi import FastAPI, Depends, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from database import init_db, get_db
 from models import AmneziaClient
 from provisioning import ProvisioningService
 import qrcode
 import io
-import json
 
 app = FastAPI(title="Amnesia Provisioning")
 
@@ -14,9 +13,10 @@ app = FastAPI(title="Amnesia Provisioning")
 def startup():
     init_db()
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
-    return {"status": "Amnesia provisioning service", "version": "0.1"}
+    with open('/opt/amnesia/templates/index.html', 'r') as f:
+        return f.read()
 
 @app.get("/health")
 def health():
@@ -26,65 +26,44 @@ def health():
 def provision(db: Session = Depends(get_db)):
     hashes = ProvisioningService.generate_random_hashes()
     conf = ProvisioningService.generate_conf("", **hashes)
-    
-    client = AmneziaClient(
-        h1=hashes['h1'],
-        h2=hashes['h2'],
-        h3=hashes['h3'],
-        h4=hashes['h4'],
-        conf_content=conf
-    )
+    client = AmneziaClient(h1=hashes['h1'], h2=hashes['h2'], h3=hashes['h3'], h4=hashes['h4'], conf_content=conf)
     db.add(client)
     db.commit()
     db.refresh(client)
-    
-    return {
-        "client_id": client.client_id,
-        "status": "provisioned",
-        "created_at": client.created_at.isoformat()
-    }
+    return {"client_id": client.client_id, "status": "provisioned", "created_at": client.created_at.isoformat()}
+
+@app.get("/clients")
+def list_clients(db: Session = Depends(get_db)):
+    clients = db.query(AmneziaClient).filter(AmneziaClient.is_active == True).order_by(AmneziaClient.created_at.desc()).all()
+    return [{"client_id": c.client_id, "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S")} for c in clients]
 
 @app.get("/conf/{client_id}")
 def get_conf(client_id: str, db: Session = Depends(get_db)):
     client = db.query(AmneziaClient).filter(AmneziaClient.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    if not client.is_active:
-        raise HTTPException(status_code=403, detail="Client revoked")
-    
-    return StreamingResponse(
-        io.BytesIO(client.conf_content.encode()),
-        media_type="text/plain",
-        headers={"Content-Disposition": f"attachment; filename={client_id}.conf"}
-    )
+    if not client: raise HTTPException(status_code=404, detail="Not found")
+    if not client.is_active: raise HTTPException(status_code=403, detail="Revoked")
+    return StreamingResponse(io.BytesIO(client.conf_content.encode()), media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={client_id}.conf"})
 
 @app.get("/qr/{client_id}")
 def get_qr(client_id: str, db: Session = Depends(get_db)):
     client = db.query(AmneziaClient).filter(AmneziaClient.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    
+    if not client: raise HTTPException(status_code=404, detail="Not found")
     qr_data = f"https://amnesia.ravor.ru/conf/{client_id}"
     qr = qrcode.QRCode(version=1, box_size=10, border=5)
     qr.add_data(qr_data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
-    
     img_bytes = io.BytesIO()
     img.save(img_bytes, format='PNG')
     img_bytes.seek(0)
-    
     return StreamingResponse(img_bytes, media_type="image/png")
 
 @app.delete("/revoke/{client_id}")
 def revoke(client_id: str, db: Session = Depends(get_db)):
     client = db.query(AmneziaClient).filter(AmneziaClient.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-    
+    if not client: raise HTTPException(status_code=404, detail="Not found")
     client.is_active = False
     db.commit()
-    
     return {"status": "revoked", "client_id": client_id}
 
 if __name__ == "__main__":
